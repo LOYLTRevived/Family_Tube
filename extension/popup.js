@@ -26,6 +26,51 @@ document.getElementById('send-ai').onclick = () => {
     });
 };
 
+function renderCustomWords() {
+    chrome.storage.local.get({ customProfanity: [] }, data => {
+        const list = document.getElementById('custom-word-list');
+        list.innerHTML = '';
+        data.customProfanity.forEach(word => {
+            const li = document.createElement('li');
+            li.textContent = word + ' ';
+            const delBtn = document.createElement('button');
+            delBtn.textContent = 'Delete';
+            delBtn.style.marginLeft = '8px';
+            delBtn.onclick = () => {
+                chrome.storage.local.get({ customProfanity: [] }, d => {
+                    const updated = d.customProfanity.filter(w => w !== word);
+                    chrome.storage.local.set({ customProfanity: updated }, renderCustomWords);
+                });
+            };
+            li.appendChild(delBtn);
+            list.appendChild(li);
+        });
+    });
+}
+
+document.getElementById('add-word-btn').onclick = () => {
+    const input = document.getElementById('add-word-input');
+    const word = input.value.trim();
+    if (!word) return;
+    chrome.storage.local.get({ customProfanity: [] }, data => {
+        const customProfanity = data.customProfanity;
+        if (!customProfanity.includes(word)) {
+            customProfanity.push(word);
+            chrome.storage.local.set({ customProfanity }, () => {
+                document.getElementById('add-word-status').textContent = 'Added!';
+                input.value = '';
+                renderCustomWords();
+                setTimeout(() => document.getElementById('add-word-status').textContent = '', 1000);
+            });
+        } else {
+            document.getElementById('add-word-status').textContent = 'Already exists!';
+            setTimeout(() => document.getElementById('add-word-status').textContent = '', 1000);
+        }
+    });
+};
+
+renderCustomWords();
+
 chrome.runtime.sendMessage({ type: 'GET_STATUS' }, response => {
     updateStatus(response.isActive);
 });
