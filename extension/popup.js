@@ -17,14 +17,39 @@ document.getElementById('send-ai').onclick = () => {
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
         const url = tabs[0].url;
         chrome.runtime.sendMessage({ type: 'SEND_TO_AI_SERVER', url }, response => {
-            if (response && response.success) {
-                document.getElementById('processing-state').textContent = 'Sent!';
+            if (response && response.success && response.data.job_id) {
+                pollForMuteSchedule(response.data.job_id, url);
             } else {
                 document.getElementById('processing-state').textContent = 'Failed!';
             }
         });
     });
 };
+
+function pollForMuteSchedule(jobId, url, attempt = 0) {
+    fetch(`http://localhost:5000/status/${jobId}`)
+        .then(res => res.json())
+        .then(statusData => {
+            if (statusData.status === "done") {
+                fetch(`http://localhost:5000/mute_schedule/${jobId}`)
+                    .then(res => res.json())
+                    .then(scheduleData => {
+                        // Store mute schedule locally
+                        chrome.storage.local.set({ muteSchedule: scheduleData.mute_schedule, muteScheduleUrl: url }, () => {
+                            document.getElementById('processing-state').textContent = 'Mute Schedule Loaded – Profanity Auto-Muted';
+                        });
+                    });
+            } else if (statusData.status === "error") {
+                document.getElementById('processing-state').textContent = 'Processing failed!';
+            } else {
+                // Still processing, poll again after 2 seconds
+                setTimeout(() => pollForMuteSchedule(jobId, url, attempt + 1), 2000);
+            }
+        })
+        .catch(() => {
+            document.getElementById('processing-state').textContent = 'Error contacting server!';
+        });
+}
 
 function renderCustomWords() {
     chrome.storage.local.get({ customProfanity: [] }, data => {

@@ -1,22 +1,25 @@
 name: Family_Tube
 channels:
-  - defaults
+  - pytorch
+  - nvidia
   - conda-forge
-
+  - defaults
 dependencies:
   - python=3.10
   - ffmpeg
   - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
   - pip:
-      - fastapi
-      - uvicorn
-      - yt-dlp
-      - whisperx
-      - torch
-      - torchaudio
-      - numpy
-      - pydantic
-      - requests
-      - websockets
-      - pytest
-      - python-dotenv
+    - fastapi
+    - uvicorn
+    - yt-dlp
+    - whisperx
+    - numpy
+    - pydantic
+    - requests
+    - websockets
+    - pytest
+    - python-dotenv
