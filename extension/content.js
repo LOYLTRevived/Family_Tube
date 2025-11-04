@@ -1,6 +1,7 @@
 /**
  * Family-Friendly Tube - content.js
- * Injects into YouTube pages to filter, censor, and mute video based on live captions.
+ * Injects into YouTube pages to filter, censor, and mute video based on live captions,
+ * and also applies a pre-defined timed mute schedule.
  * Muting is triggered immediately upon detection of single words or the first two words of a phrase.
  */
 
@@ -14,13 +15,76 @@ let isVideoMuted = false;
 let lastMuteTime = 0;
 let lastProcessedCaption = ""; // Stores the last unique caption text processed
 
-// Constants (from previous request)
-const MUTE_DURATION_MS = 500; // Mute for 0.5 seconds
-const MUTE_COOLDOWN_MS = 0; // Minimum time between auto-mutes (0ms = no cooldown)
+// --- Mute Schedule Variables ---
+let muteSchedule = []; // Array of {start: number, end: number} objects
+let muteScheduleUrl = ""; // URL associated with the current schedule
 
+let overlayTimeout = null;
+
+// Constants
+const MUTE_DURATION_MS = 500; // Mute for 0.5 seconds (for live caption profanity)
+const MUTE_COOLDOWN_MS = 0; // Minimum time between auto-mutes (0ms = no cooldown)
+const SCHEDULE_CHECK_INTERVAL_MS = 200; // Check video time every 200ms for schedule application
+
+// --- Debug Logging Function ---
 function debugLog(message, ...optionalParams) {
-    // console.log(`[FFT-Content] ${message}`, ...optionalParams);
+    console.log(`[FFT-Content] ${message}`, ...optionalParams);
 }
+// --- End Debug Logging Function ---
+
+
+function showProgressOverlay(statusText) {
+    let overlay = document.getElementById('fftube-ai-progress-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'fftube-ai-progress-overlay';
+        overlay.style.position = 'fixed';
+        overlay.style.top = '20px';
+        overlay.style.right = '20px';
+        overlay.style.zIndex = '999999';
+        overlay.style.background = 'rgba(30,30,30,0.95)';
+        overlay.style.color = '#fff';
+        overlay.style.padding = '18px 28px';
+        overlay.style.borderRadius = '10px';
+        overlay.style.fontSize = '1.2em';
+        overlay.style.boxShadow = '0 2px 12px rgba(0,0,0,0.3)';
+        overlay.style.fontFamily = 'sans-serif';
+        overlay.style.maxWidth = '350px';
+        overlay.style.textAlign = 'center';
+        overlay.style.pointerEvents = 'none';
+        document.body.appendChild(overlay);
+    }
+    overlay.textContent = statusText;
+    overlay.style.display = 'block';
+    if (overlayTimeout) clearTimeout(overlayTimeout);
+}
+
+function getBaseVideoUrl(url) {
+    try {
+        const u = new URL(url);
+        if (u.hostname.includes('youtube.com') && u.searchParams.has('v')) {
+            return `https://www.youtube.com/watch?v=${u.searchParams.get('v')}`;
+        }
+        return u.origin + u.pathname;
+    } catch {
+        return url;
+    }
+}
+
+function hideProgressOverlay(delay = 0) {
+    if (overlayTimeout) clearTimeout(overlayTimeout);
+    if (delay > 0) {
+        overlayTimeout = setTimeout(() => {
+            const overlay = document.getElementById('fftube-ai-progress-overlay');
+            if (overlay) overlay.style.display = 'none';
+        }, delay);
+    } else {
+        const overlay = document.getElementById('fftube-ai-progress-overlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+}
+
+// --- Profanity List & Regex Management ---
 
 /**
  * Loads the default profanity list and merges it with user-defined words from storage.
@@ -39,6 +103,7 @@ async function loadProfanityList() {
         });
 
         const merged = [...new Set([...defaultList, ...data.customProfanity])];
+        debugLog(`Loaded and merged ${merged.length} total profanity items.`);
         return merged;
 
     } catch (error) {
@@ -53,6 +118,7 @@ async function loadProfanityList() {
 function splitProfanityList(list) {
     const phrases = list.filter(w => w.trim().split(/\s+/).length > 1);
     const words = list.filter(w => w.trim().split(/\s+/).length === 1);
+    debugLog(`Split profanity list: ${words.length} single words, ${phrases.length} phrases.`);
     return { phrases, words };
 }
 
@@ -78,9 +144,10 @@ function compileRegexes() {
     debugLog(`Prepared ${phraseRegexes.length} phrase regexes.`);
 }
 
+// --- Video Mute Management (Live Caption Trigger) ---
 
 /**
- * Toggles the video mute state for the MUTE_DURATION_MS.
+ * Toggles the video mute state for the MUTE_DURATION_MS (used for live caption trigger).
  */
 function autoMuteVideo() {
     // Check if video is already muted or if the cooldown period has not passed
@@ -90,27 +157,37 @@ function autoMuteVideo() {
     }
 
     const video = document.querySelector('video');
-    if (video) {
-        video.muted = true;
-        isVideoMuted = true;
-        lastMuteTime = Date.now();
-        
-        debugLog(`Video Muted for ${MUTE_DURATION_MS / 1000} seconds.`);
-
-        // Notify background script (for popup status update)
-        chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'MUTED' });
-
-        setTimeout(() => {
-            if (video.muted) {
-                 video.muted = false;
-            }
-            isVideoMuted = false;
-            debugLog('Video Unmuted.');
-            chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'UNMUTED' });
-        }, MUTE_DURATION_MS);
-    } else {
+    if (!video) {
         debugLog('Mute failed: Video element not found.');
+        return;
     }
+
+    // If the mute schedule is active, do NOT trigger a caption-based mute
+    if (isScheduledMuteActive(video.currentTime)) {
+        debugLog('Auto-mute skipped: Schedule is already muting at this time.');
+        return;
+    }
+
+    // Otherwise, allow caption-based mute
+    video.muted = true;
+    isVideoMuted = true;
+    lastMuteTime = Date.now();
+
+    debugLog(`Video Muted by profanity for ${MUTE_DURATION_MS / 1000} seconds.`);
+
+    chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'MUTED' });
+
+    setTimeout(() => {
+        // Only unmute if we're not inside a scheduled mute window
+        if (video.muted && !isScheduledMuteActive(video.currentTime)) {
+            video.muted = false;
+            isVideoMuted = false;
+            debugLog('Video Unmuted after profanity timeout.');
+            chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'UNMUTED' });
+        } else {
+            debugLog('Skipping profanity unmute: Scheduled mute is currently active.');
+        }
+    }, MUTE_DURATION_MS);
 }
 
 /**
@@ -135,20 +212,19 @@ function censorCaptionText(text) {
 function processCaptionNode(originalText, node) {
     const currentText = originalText.trim();
 
-    // Optimization: Skip if the text hasn't changed substantially
     if (currentText === lastProcessedCaption.trim()) {
         return; 
     }
-    
-    // Update the last processed caption text
     lastProcessedCaption = currentText;
-    
-    if (isVideoMuted) {
-        // Still need to censor even if muted
+    const video = document.querySelector('video');
+    const isCurrentlyMuted = video ? video.muted : false;
+
+    if (isCurrentlyMuted) {
         const censoredText = censorCaptionText(currentText);
         if (node.innerText.trim() !== censoredText.trim()) {
             node.innerText = censoredText;
             lastProcessedCaption = censoredText.trim(); 
+            debugLog(`Censored muted caption: "${currentText}" -> "${censoredText}"`);
         }
         return;
     }
@@ -161,21 +237,14 @@ function processCaptionNode(originalText, node) {
         muteTriggered = true;
     }
 
-    // 2. Check for phrase start (first 2 words)
+    // 2. Check for full phrase match only (disable first two words logic)
     if (!muteTriggered && phrases.length > 0) {
         for (const phrase of phrases) {
-            const phraseWords = phrase.trim().split(/\s+/).filter(w => w.length > 0);
-            
-            // Only check phrases that are 2 words or longer
-            if (phraseWords.length >= 2) {
-                const firstTwoWords = phraseWords.slice(0, 2).join(' ');
-                
-                // Use startsWith for fragmented caption text
-                if (currentText.toLowerCase().startsWith(firstTwoWords.toLowerCase())) {
-                    debugLog(`PHRASE START TRIGGERED (First 2 words of "${phrase}"): "${currentText}"`);
-                    muteTriggered = true;
-                    break; // Found a trigger, stop checking phrases
-                }
+            // Only trigger mute if the full phrase is present in the caption
+            if (currentText.toLowerCase().includes(phrase.toLowerCase())) {
+                debugLog(`FULL PHRASE PROFANITY DETECTED: "${phrase}" in "${currentText}"`);
+                muteTriggered = true;
+                break;
             }
         }
     }
@@ -184,7 +253,6 @@ function processCaptionNode(originalText, node) {
         autoMuteVideo();
     }
 
-    // Censor the text in the DOM
     const censoredText = censorCaptionText(currentText);
     if (node.innerText.trim() !== censoredText.trim()) {
         node.innerText = censoredText;
@@ -193,13 +261,84 @@ function processCaptionNode(originalText, node) {
     }
 }
 
+// --- Mute Schedule Integration ---
+
+/**
+ * Loads the mute schedule and associated URL from storage.
+ */
+function checkAndApplyMuteSchedule() {
+    debugLog('Checking for mute schedule in storage...');
+    chrome.storage.local.get(['muteSchedule', 'muteScheduleUrl'], data => {
+        // Ensure the schedule is only loaded if it matches the current page's URL
+        const currentBaseUrl = getBaseVideoUrl(location.href);
+        if (data.muteScheduleUrl === currentBaseUrl) {
+            muteSchedule = data.muteSchedule || [];
+            muteScheduleUrl = data.muteScheduleUrl;
+            debugLog(`Loaded mute schedule with ${muteSchedule.length} entries for current URL.`);
+        } else {
+            muteSchedule = [];
+            muteScheduleUrl = "";
+            debugLog('No matching mute schedule found for current URL. Current URL: ' + currentBaseUrl + ' vs Schedule URL: ' + data.muteScheduleUrl);
+        }
+    });
+}
+
+/**
+ * Checks if the given time is within a scheduled mute window.
+ * @param {number} currentTime - The current video time in seconds.
+ * @returns {boolean} True if a scheduled mute is active.
+ */
+function isScheduledMuteActive(currentTime) {
+    if (!muteSchedule.length) return false;
+    // Check against all schedule entries
+    for (const entry of muteSchedule) {
+        if (currentTime >= entry.start && currentTime <= entry.end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Periodically checks the video time and mutes/unmutes based on the schedule.
+ */
+function scheduleMuteChecker() {
+    // Only proceed if there is a schedule and the current URL matches the schedule URL
+    const video = document.querySelector('video');
+    if (!video || !muteSchedule.length || getBaseVideoUrl(muteScheduleUrl) !== getBaseVideoUrl(location.href)) {
+        return; 
+    }
+    
+    const currentTime = video.currentTime;
+    const shouldBeMuted = isScheduledMuteActive(currentTime);
+
+    if (shouldBeMuted && !video.muted) {
+        // Mute the video
+        video.muted = true;
+        // isVideoMuted state is primarily for live caption logic, 
+        // but we ensure the video.muted state is respected
+        isVideoMuted = true; 
+        debugLog(`Video Muted by SCHEDULE at ${currentTime.toFixed(2)}s.`);
+        chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'MUTED' });
+    } else if (!shouldBeMuted && video.muted && Date.now() - lastMuteTime > MUTE_DURATION_MS) {
+        // Unmute only if not muted by a recent profanity trigger
+        video.muted = false;
+        isVideoMuted = false;
+        debugLog(`Video Unmuted by SCHEDULE/Profanity Cooldown at ${currentTime.toFixed(2)}s.`);
+        chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'UNMUTED' });
+    }
+}
+
+// --- Observer & Initialization Logic ---
+
 /**
  * Sets up a MutationObserver to watch for caption changes (more efficient than polling).
  */
 function setupCaptionObserver() {
     if (observer) observer.disconnect();
     
-    const captionContainer = document.querySelector('.captions-display-panel, .ytp-caption-window-container');
+    // Find caption container - targeting common modern and legacy selectors
+    const captionContainer = document.querySelector('.ytp-caption-window-container, .captions-display-panel');
     
     if (!captionContainer) {
         debugLog('Caption container not found. Retrying in 2 seconds.');
@@ -245,15 +384,23 @@ function setupCaptionObserver() {
     });
     
     lastProcessedCaption = "";
+    debugLog('MutationObserver started on caption container.');
 }
 
 function initializeFiltering() {
     debugLog('Filtering initialized/re-initialized.');
+    
+    // Load and check for a pre-saved mute schedule for the current URL
+    checkAndApplyMuteSchedule(); 
+
+    // Start watching for captions
     setupCaptionObserver();
 }
 
 // --- Main Execution Block ---
 (async function() {
+    debugLog('Script execution started.');
+    
     // 1. Load, Split, and Compile Regex
     const fullList = await loadProfanityList();
     const split = splitProfanityList(fullList);
@@ -261,7 +408,7 @@ function initializeFiltering() {
     phrases = split.phrases;
     compileRegexes();
 
-    // 2. Set up observer for caption elements
+    // 2. Set up observer for caption elements and load mute schedule
     initializeFiltering(); 
 
     // 3. Listen for YouTube navigation (SPA) to re-initialize
@@ -276,6 +423,7 @@ function initializeFiltering() {
         }
     });
     urlObserver.observe(document.body, { subtree: true, childList: true });
+    debugLog('URL change observer initialized.');
 
     // 4. Listen for mute toggle from popup
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -289,4 +437,19 @@ function initializeFiltering() {
             sendResponse({ muted: video ? video.muted : false });
         }
     });
+    debugLog('Runtime message listener (TOGGLE_MUTE) initialized.');
+
+    // 5. Listen for changes to the mute schedule in storage (from popup)
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && (changes.muteSchedule || changes.muteScheduleUrl)) {
+            debugLog('Storage change detected (muteSchedule). Re-checking schedule.');
+            // Re-check and apply the schedule when storage changes
+            checkAndApplyMuteSchedule(); 
+        }
+    });
+
+    // 6. Start the periodic checker for the timed mute schedule
+    setInterval(scheduleMuteChecker, SCHEDULE_CHECK_INTERVAL_MS);
+    debugLog(`Periodic schedule mute checker started (interval: ${SCHEDULE_CHECK_INTERVAL_MS}ms).`);
+
 })();

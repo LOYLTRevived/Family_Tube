@@ -4,6 +4,33 @@ function updateStatus(isActive) {
     document.getElementById('active-status').textContent = isActive ? 'Active' : 'Inactive';
 }
 
+function checkMuteScheduleStatus() {
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        if (!tabs.length) return;
+        const url = tabs[0].url;
+        const baseUrl = getBaseVideoUrl(url);
+        chrome.storage.local.get(['muteSchedule', 'muteScheduleUrl'], data => {
+            if (data.muteSchedule && data.muteSchedule.length && data.muteScheduleUrl === baseUrl) {
+                document.getElementById('mute-schedule-loaded').textContent = 'Loaded';
+            } else {
+                document.getElementById('mute-schedule-loaded').textContent = 'Not Loaded';
+            }
+        });
+    });
+}
+
+function getBaseVideoUrl(url) {
+    try {
+        const u = new URL(url);
+        if (u.hostname.includes('youtube.com') && u.searchParams.has('v')) {
+            return `https://www.youtube.com/watch?v=${u.searchParams.get('v')}`;
+        }
+        return u.origin + u.pathname;
+    } catch {
+        return url;
+    }
+}
+
 document.getElementById('mute-toggle').onclick = () => {
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_MUTE' }, response => {
@@ -30,19 +57,43 @@ function pollForMuteSchedule(jobId, url, attempt = 0) {
     fetch(`http://localhost:5000/status/${jobId}`)
         .then(res => res.json())
         .then(statusData => {
+            // Send progress to content script
+            chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+                chrome.tabs.sendMessage(tabs[0].id, {
+                    type: 'AI_PROGRESS',
+                    status: statusData.status,
+                    url: url
+                });
+            });
+
             if (statusData.status === "done") {
                 fetch(`http://localhost:5000/mute_schedule/${jobId}`)
                     .then(res => res.json())
                     .then(scheduleData => {
-                        // Store mute schedule locally
-                        chrome.storage.local.set({ muteSchedule: scheduleData.mute_schedule, muteScheduleUrl: url }, () => {
+                        chrome.storage.local.set({ muteSchedule: scheduleData.mute_schedule, muteScheduleUrl: getBaseVideoUrl(url) }, () => {
                             document.getElementById('processing-state').textContent = 'Mute Schedule Loaded – Profanity Auto-Muted';
+                            checkMuteScheduleStatus();
+                            // Notify overlay to hide
+                            chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+                                chrome.tabs.sendMessage(tabs[0].id, {
+                                    type: 'AI_PROGRESS',
+                                    status: 'complete',
+                                    url: url
+                                });
+                            });
                         });
                     });
             } else if (statusData.status === "error") {
                 document.getElementById('processing-state').textContent = 'Processing failed!';
+                // Notify overlay to hide
+                chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+                    chrome.tabs.sendMessage(tabs[0].id, {
+                        type: 'AI_PROGRESS',
+                        status: 'error',
+                        url: url
+                    });
+                });
             } else {
-                // Still processing, poll again after 2 seconds
                 setTimeout(() => pollForMuteSchedule(jobId, url, attempt + 1), 2000);
             }
         })
@@ -99,3 +150,6 @@ renderCustomWords();
 chrome.runtime.sendMessage({ type: 'GET_STATUS' }, response => {
     updateStatus(response.isActive);
 });
+
+checkMuteScheduleStatus();
+
