@@ -2,6 +2,8 @@
 
 **Automatically mute YouTube videos when profanity appears in captions. Optionally, process audio with a local AI backend for advanced filtering.**
 
+
+**FOR BEST RESULTS USE CAPTIONS AND THE MUTESCHEDULE IN THE BACKEND. ITS ESSENTIALLY A DOUBLE SAFE**
 ---
 
 ## 🚀 Features
