@@ -53,6 +53,27 @@ document.getElementById('send-ai').onclick = () => {
     });
 };
 
+async function sendToAIServer(videoUrl) {
+    // Get custom words from storage
+    const data = await new Promise(resolve => {
+        chrome.storage.local.get({ customProfanity: [] }, resolve);
+    });
+
+    const customProfanity = data.customProfanity || [];
+
+    const response = await fetch("http://localhost:5000/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            url: videoUrl,
+            custom_words: customProfanity // 🧠 include custom list
+        })
+    });
+
+    const result = await response.json();
+    console.log("AI Server response:", result);
+}
+
 function pollForMuteSchedule(jobId, url, attempt = 0) {
     fetch(`http://localhost:5000/status/${jobId}`)
         .then(res => res.json())
