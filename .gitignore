@@ -1,0 +1,65 @@
+# =========================
+# Python / AI server
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv
+env/
+venv/
+*.sqlite3
+*.log
+
+# Conda environment
+/environment.yml
+/.conda/
+*.conda
+
+# Cache and downloads
+/ai-server/downloads/
+/ai-server/cache/
+
+# PyTorch / WhisperX temp files
+*.pt
+*.pth
+*.bin
+
+# =========================
+# VSCode / IDEs
+# =========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# =========================
+# OS generated files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Chrome Extension / Frontend
+# =========================
+/extension/assets/*.zip
+/extension/assets/*.exe
+/extension/assets/*.DS_Store
+
+# =========================
+# Testing / coverage
+# =========================
+/ai-server/tests/__pycache__/
+.coverage
+htmlcov/
+*.pytest_cache/
+*.cache
+
+# =========================
+# Misc
+# =========================
+*.bak
+*.swp
+*.tmp
