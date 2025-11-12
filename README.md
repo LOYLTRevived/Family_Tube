@@ -109,7 +109,7 @@ conda activate youtube-audio-censor
 
 ```bash
 cd ai-server
-uvicorn app:app --reload
+uvicorn app:app --reload --host 0.0.0.0 --port 5000
 ```
 
 * The Chrome extension can now send video URLs to `http://localhost:5000/process` for advanced processing.

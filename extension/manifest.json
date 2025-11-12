@@ -6,7 +6,8 @@
   "permissions": [
     "scripting",
     "tabs",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
@@ -20,6 +21,11 @@
       "matches": ["https://www.youtube.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.youtube.com/playlist?list=WL"],
+      "js": ["watch_later_parser.js"],
+      "run_at": "document_end"
     }
   ],
   "action": {

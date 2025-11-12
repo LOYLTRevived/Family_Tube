@@ -2,17 +2,17 @@
   {
     "start": 53.619,
     "end": 55.001000000000005,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 201.931,
     "end": 202.552,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 206.43800000000002,
     "end": 207.19899999999998,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 228.352,
@@ -42,17 +42,17 @@
   {
     "start": 565.274,
     "end": 567.156,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 579.5300000000001,
     "end": 584.856,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 734.517,
     "end": 735.458,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 770.591,
@@ -67,22 +67,27 @@
   {
     "start": 775.763,
     "end": 776.483,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 950.615,
     "end": 954.5409999999999,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 1118.684,
     "end": 1120.566,
-    "word": "oh my god"
+    "word": "my god"
+  },
+  {
+    "start": 1175.9009999999998,
+    "end": 1176.742,
+    "word": "god"
   },
   {
     "start": 1215.0829999999999,
     "end": 1217.145,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 1235.2749999999999,
@@ -137,11 +142,11 @@
   {
     "start": 2051.5589999999997,
     "end": 2054.263,
-    "word": "oh my god"
+    "word": "my god"
   },
   {
     "start": 2056.0679999999998,
     "end": 2058.792,
-    "word": "oh my god"
+    "word": "my god"
   }
 ]

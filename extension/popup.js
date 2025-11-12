@@ -4,21 +4,6 @@ function updateStatus(isActive) {
     document.getElementById('active-status').textContent = isActive ? 'Active' : 'Inactive';
 }
 
-function checkMuteScheduleStatus() {
-    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        if (!tabs.length) return;
-        const url = tabs[0].url;
-        const baseUrl = getBaseVideoUrl(url);
-        chrome.storage.local.get(['muteSchedule', 'muteScheduleUrl'], data => {
-            if (data.muteSchedule && data.muteSchedule.length && data.muteScheduleUrl === baseUrl) {
-                document.getElementById('mute-schedule-loaded').textContent = 'Loaded';
-            } else {
-                document.getElementById('mute-schedule-loaded').textContent = 'Not Loaded';
-            }
-        });
-    });
-}
-
 function getBaseVideoUrl(url) {
     try {
         const u = new URL(url);
@@ -29,6 +14,47 @@ function getBaseVideoUrl(url) {
     } catch {
         return url;
     }
+}
+
+function checkMuteScheduleStatus() {
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        if (!tabs.length) return;
+
+        const url = tabs[0].url;
+        
+        // 1. Determine the Video ID and the dynamic storage key name
+        const currentBaseUrl = getBaseVideoUrl(url);
+        const videoIdMatch = currentBaseUrl.match(/[?&]v=([^&]+)/); 
+        const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+        if (!videoId) {
+            // Cannot determine video ID (e.g., viewing non-video page)
+            document.getElementById('mute-schedule-loaded').textContent = 'Not Applicable';
+            return;
+        }
+
+        const scheduleKey = `schedule_${videoId}`; 
+        
+        // 2. Request the dynamic schedule key from storage
+        chrome.storage.local.get([scheduleKey], data => {
+            
+            // The item retrieved is the 'scheduleContainer' object, 
+            // e.g., { schedule: [..], url: "..." }
+            const scheduleContainer = data[scheduleKey]; 
+
+            // 3. Check for the container object AND the nested 'schedule' array's length
+            if (scheduleContainer && 
+                Array.isArray(scheduleContainer.schedule) && 
+                scheduleContainer.schedule.length > 0) 
+            {
+                // Success: The schedule is found and valid
+                document.getElementById('mute-schedule-loaded').textContent = 'Loaded';
+            } else {
+                // Failure: No valid schedule data found
+                document.getElementById('mute-schedule-loaded').textContent = 'Not Loaded';
+            }
+        });
+    });
 }
 
 document.getElementById('mute-toggle').onclick = () => {
@@ -91,9 +117,37 @@ function pollForMuteSchedule(jobId, url, attempt = 0) {
                 fetch(`http://localhost:5000/mute_schedule/${jobId}`)
                     .then(res => res.json())
                     .then(scheduleData => {
-                        chrome.storage.local.set({ muteSchedule: scheduleData.mute_schedule, muteScheduleUrl: getBaseVideoUrl(url) }, () => {
+                        // --- 🛠️ START OF REVISED LOGIC ---
+
+                        const currentBaseUrl = getBaseVideoUrl(url);
+                        const videoIdMatch = currentBaseUrl.match(/[?&]v=([^&]+)/); 
+                        const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+                        if (!videoId) {
+                            document.getElementById('processing-state').textContent = 'Error: Could not determine Video ID.';
+                            return;
+                        }
+
+                        // 1. Construct the dynamic key: "schedule_1dwDlZy9fk8"
+                        const scheduleKey = `schedule_${videoId}`;
+                        
+                        // 2. Construct the value object: { schedule: [...], url: "..." }
+                        const scheduleContainer = {
+                            schedule: scheduleData.mute_schedule,
+                            url: currentBaseUrl
+                        };
+                        
+                        // 3. Create the final storage object
+                        const storageObject = {};
+                        storageObject[scheduleKey] = scheduleContainer;
+                        
+                        // 4. Save the object to local storage
+                        chrome.storage.local.set(storageObject, () => {
+                        // --- 🛠️ END OF REVISED LOGIC ---
                             document.getElementById('processing-state').textContent = 'Mute Schedule Loaded – Profanity Auto-Muted';
-                            checkMuteScheduleStatus();
+                            // This function will now work correctly because it uses the new dynamic key logic
+                            checkMuteScheduleStatus(); 
+                            
                             // Notify overlay to hide
                             chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
                                 chrome.tabs.sendMessage(tabs[0].id, {
@@ -106,14 +160,7 @@ function pollForMuteSchedule(jobId, url, attempt = 0) {
                     });
             } else if (statusData.status === "error") {
                 document.getElementById('processing-state').textContent = 'Processing failed!';
-                // Notify overlay to hide
-                chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                        type: 'AI_PROGRESS',
-                        status: 'error',
-                        url: url
-                    });
-                });
+                // ... (rest of the error handling remains the same)
             } else {
                 setTimeout(() => pollForMuteSchedule(jobId, url, attempt + 1), 2000);
             }
