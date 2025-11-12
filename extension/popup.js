@@ -1,4 +1,4 @@
-// ...existing code...
+// popup.js
 
 function updateStatus(isActive) {
     document.getElementById('active-status').textContent = isActive ? 'Active' : 'Inactive';
@@ -66,109 +66,34 @@ document.getElementById('mute-toggle').onclick = () => {
 };
 
 document.getElementById('send-ai').onclick = () => {
-    document.getElementById('processing-state').textContent = 'Processing...';
+    // 1. Immediately update UI to reflect queuing status
+    document.getElementById('processing-state').textContent = 'Queuing Video...';
+    
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        if (!tabs || tabs.length === 0) {
+            document.getElementById('processing-state').textContent = 'Error: No active tab found.';
+            return;
+        }
+
         const url = tabs[0].url;
-        chrome.runtime.sendMessage({ type: 'SEND_TO_AI_SERVER', url }, response => {
-            if (response && response.success && response.data.job_id) {
-                pollForMuteSchedule(response.data.job_id, url);
+        
+        // 2. Send the message. The background script will add it to the queue.
+        chrome.runtime.sendMessage({ type: 'SEND_TO_AI_SERVER', url: url }, response => {
+            
+            // The response tells us if the video was successfully handed off to the queue
+            if (response && response.success) {
+                // Success: The video is now in the queue
+                document.getElementById('processing-state').textContent = 'Added to Queue. Processing will begin shortly.';
             } else {
-                document.getElementById('processing-state').textContent = 'Failed!';
+                // Failure to talk to background script or process the request
+                document.getElementById('processing-state').textContent = 'Failed to add video to queue.';
             }
         });
     });
 };
 
-async function sendToAIServer(videoUrl) {
-    // Get custom words from storage
-    const data = await new Promise(resolve => {
-        chrome.storage.local.get({ customProfanity: [] }, resolve);
-    });
 
-    const customProfanity = data.customProfanity || [];
 
-    const response = await fetch("http://localhost:5000/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            url: videoUrl,
-            custom_words: customProfanity // 🧠 include custom list
-        })
-    });
-
-    const result = await response.json();
-    console.log("AI Server response:", result);
-}
-
-function pollForMuteSchedule(jobId, url, attempt = 0) {
-    fetch(`http://localhost:5000/status/${jobId}`)
-        .then(res => res.json())
-        .then(statusData => {
-            // Send progress to content script
-            chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-                chrome.tabs.sendMessage(tabs[0].id, {
-                    type: 'AI_PROGRESS',
-                    status: statusData.status,
-                    url: url
-                });
-            });
-
-            if (statusData.status === "done") {
-                fetch(`http://localhost:5000/mute_schedule/${jobId}`)
-                    .then(res => res.json())
-                    .then(scheduleData => {
-                        // --- 🛠️ START OF REVISED LOGIC ---
-
-                        const currentBaseUrl = getBaseVideoUrl(url);
-                        const videoIdMatch = currentBaseUrl.match(/[?&]v=([^&]+)/); 
-                        const videoId = videoIdMatch ? videoIdMatch[1] : null;
-
-                        if (!videoId) {
-                            document.getElementById('processing-state').textContent = 'Error: Could not determine Video ID.';
-                            return;
-                        }
-
-                        // 1. Construct the dynamic key: "schedule_1dwDlZy9fk8"
-                        const scheduleKey = `schedule_${videoId}`;
-                        
-                        // 2. Construct the value object: { schedule: [...], url: "..." }
-                        const scheduleContainer = {
-                            schedule: scheduleData.mute_schedule,
-                            url: currentBaseUrl
-                        };
-                        
-                        // 3. Create the final storage object
-                        const storageObject = {};
-                        storageObject[scheduleKey] = scheduleContainer;
-                        
-                        // 4. Save the object to local storage
-                        chrome.storage.local.set(storageObject, () => {
-                        // --- 🛠️ END OF REVISED LOGIC ---
-                            document.getElementById('processing-state').textContent = 'Mute Schedule Loaded – Profanity Auto-Muted';
-                            // This function will now work correctly because it uses the new dynamic key logic
-                            checkMuteScheduleStatus(); 
-                            
-                            // Notify overlay to hide
-                            chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-                                chrome.tabs.sendMessage(tabs[0].id, {
-                                    type: 'AI_PROGRESS',
-                                    status: 'complete',
-                                    url: url
-                                });
-                            });
-                        });
-                    });
-            } else if (statusData.status === "error") {
-                document.getElementById('processing-state').textContent = 'Processing failed!';
-                // ... (rest of the error handling remains the same)
-            } else {
-                setTimeout(() => pollForMuteSchedule(jobId, url, attempt + 1), 2000);
-            }
-        })
-        .catch(() => {
-            document.getElementById('processing-state').textContent = 'Error contacting server!';
-        });
-}
 
 function renderCustomWords() {
     chrome.storage.local.get({ customProfanity: [] }, data => {

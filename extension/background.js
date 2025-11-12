@@ -189,6 +189,41 @@ function fetchMuteSchedule(jobId, videoId) {
 }
 
 
+// --- NEW CENTRALIZED QUEUE ADDITION FUNCTION ---
+
+function addVideoToQueue(url) {
+    const videoIdMatch = url.match(/(?<=v=)[a-zA-Z0-9_-]{11}/);
+    const videoId = videoIdMatch ? videoIdMatch[0] : null;
+
+    if (!videoId) {
+        console.error(`[Manual Queue] Could not extract Video ID from URL: ${url}`);
+        return false;
+    }
+
+    // Use chrome.storage.local to access the queue and processed list
+    chrome.storage.local.get({ [PROCESSED_VIDEOS_KEY]: [], [WATCH_LATER_QUEUE_KEY]: [] }, (data) => {
+        const processedIds = new Set(data[PROCESSED_VIDEOS_KEY]);
+        let queue = data[WATCH_LATER_QUEUE_KEY];
+        
+        const alreadyInQueue = queue.some(item => item.videoId === videoId);
+
+        // Only add to queue if NOT processed AND NOT already in queue
+        if (!processedIds.has(videoId) && !alreadyInQueue) {
+            queue.push({ url, videoId });
+            
+            chrome.storage.local.set({ [WATCH_LATER_QUEUE_KEY]: queue }, () => {
+                console.log(`[Manual Queue] Added video ${videoId} to queue. Total size: ${queue.length}`);
+                dequeueAndProcess(); // Crucial: Starts the worker or lets it continue after current job
+            });
+        } else {
+            console.log(`[Manual Queue] Video ${videoId} is already processed or in queue.`);
+        }
+    });
+    
+    return true;
+}
+
+
 // --- MESSAGE LISTENER ---
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'GET_STATUS') {
@@ -201,18 +236,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     
     // Manual SEND_TO_AI_SERVER handler: sends custom words
     if (msg.type === 'SEND_TO_AI_SERVER') {
-        chrome.storage.local.get({ customProfanity: [] }, (data) => {
-            const customWords = data.customProfanity || [];
-            
-            fetch('http://localhost:5000/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: msg.url, custom_words: customWords })
-            })
-            .then(res => res.json())
-            .then(data => sendResponse({ success: true, data }))
-            .catch(() => sendResponse({ success: false }))
-        });
+        const success = addVideoToQueue(msg.url);
+
+        // Respond to the pop-up immediately to update its UI status
+        sendResponse({ success: success, queued: success });
         return true; 
     }
 
