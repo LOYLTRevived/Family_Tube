@@ -28,6 +28,7 @@ let captionMuteActive = false;
 let scheduleMuteActive = false;
 
 let overlayTimeout = null;
+let unmuteRetryTimeout = null;
 
 const MUTE_DURATION_MS = 500;
 const MUTE_COOLDOWN_MS = 0;
@@ -181,7 +182,10 @@ function setMuteReason(active, reason) {
             // treat other reasons as schedule-like
             scheduleMuteActive = true;
         } else {
-            scheduleMuteActive = false;
+            // This is primarily for the cooldown_retry, ensuring the flag is false
+            // but we don't accidentally clear an active schedule mute.
+            // Since we rely on desiredMuted below, we can safely skip modification 
+            // of scheduleMuteActive/captionMuteActive for a generic 'retry' reason.
         }
     }
 
@@ -190,6 +194,11 @@ function setMuteReason(active, reason) {
 
     const video = document.querySelector('video');
     if (!video) return;
+
+    if (unmuteRetryTimeout) {
+        clearTimeout(unmuteRetryTimeout);
+        unmuteRetryTimeout = null;
+    }
 
     // If desiredMuted is true and video isn't muted, mute and log
     if (desiredMuted && !video.muted) {
@@ -212,16 +221,23 @@ function setMuteReason(active, reason) {
 
     // If desiredMuted is false and video is muted, attempt to unmute (respecting cooldown)
     if (!desiredMuted && video.muted) {
-        // Ensure a minimal cooldown since last mute to prevent rapid toggle
-        if (Date.now() - lastMuteTime > MUTE_DURATION_MS) {
+        // Calculate the remaining time until cooldown is over
+        const timeSinceLastMute = Date.now() - lastMuteTime;
+        const remainingCooldown = MUTE_COOLDOWN_MS - timeSinceLastMute;
+
+        if (remainingCooldown <= 0) {
             video.muted = false;
             isVideoMuted = false;
+
             // Preserve existing unmute logs: if previously schedule cleared, log schedule/unmute; otherwise caption/unmute
             debugLog(`Video Unmuted by SCHEDULE/Profanity Cooldown at ${video.currentTime ? video.currentTime.toFixed(2) : '0.00'}s.`);
             chrome.runtime.sendMessage({ type: 'MUTE_EVENT', status: 'UNMUTED' });
         } else {
             // still in cooldown: do nothing, unmute will happen after cooldown when setMuteReason is called again
             debugLog('Unmute delayed due to cooldown.');
+            unmuteRetryTimeout = setTimeout(() => {
+                setMuteReason(false, 'retry');
+            }, remainingCooldown + 50); // slight buffer to ensure all good
         }
     }
 }
